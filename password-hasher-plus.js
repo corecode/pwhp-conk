@@ -37,7 +37,7 @@ var password_hasher_plus = {
     // from https://developer.mozilla.org/en-US/docs/XUL/School_tutorial/Appendix_D:_Loading_Scripts
     base_dir: Components.stack.filename
         .replace(/.* -> |[^\/]+$/g, ""),
-    file_url: function(name) { return this.base_dir + name; },
+    file_url: function(name, dir) { return this.base_dir + (dir || "") + "/" + name; },
 
     scripts: [
         "jquery-1.9.0.min.js",
@@ -51,10 +51,13 @@ var password_hasher_plus = {
 
     get_config: function(fields, defaultval) {
         var path = fields.join('.');
-        var res = defaultval;
+        var res = null;
         try {
             res = this.prefs.getCharPref(path);
         } catch (e) {
+            // res still null, handle below
+        }
+        if (!res || res == "") {
             if (typeof defaultval !== 'undefined')
                 return defaultval;
             path = ['defaults', fields[fields.length - 1]].join('.');
@@ -109,6 +112,33 @@ var password_hasher_plus = {
     // loaded below
     SHA1: {},
 
+
+    enable_mode: function() {
+        add_hook("create_buffer_hook",
+                 password_hasher_plus.add_listener);
+        for_each_buffer(password_hasher_plus.add_listener);
+    },
+
+    disable_mode: function() {
+        remove_hook("create_buffer_hook",
+                    password_hasher_plus.add_listener);
+        for_each_buffer(password_hasher_plus.remove_listener);
+    },
+
+    add_listener: function(buffer) {
+        if (buffer instanceof content_buffer) {
+            buffer.browser.addEventListener("DOMContentLoaded",
+                                            password_hasher_plus.attach,
+                                            false);
+        }
+    },
+
+    remove_listener: function(buffer) {
+        buffer.browser.removeEventListener("DOMContentLoaded",
+                                           password_hasher_plus.attach,
+                                           false);
+    },
+
     attach: function(event) {
         // this is the element receiving the event
         var document = event.originalTarget;
@@ -130,7 +160,7 @@ var password_hasher_plus = {
         try {
             for (var i in password_hasher_plus.scripts) {
                 var script = password_hasher_plus.scripts[i];
-                conkeror.load_url(password_hasher_plus.file_url(script),
+                conkeror.load_url(password_hasher_plus.file_url(script, "content-script"),
                                   this.content_script);
             }
         } catch (e) {
@@ -138,8 +168,8 @@ var password_hasher_plus = {
         }
     }
 };
-conkeror.load_url(password_hasher_plus.file_url("passhashcommon.js"), password_hasher_plus);
-conkeror.load_url(password_hasher_plus.file_url("sha1.js"), password_hasher_plus.SHA1);
+conkeror.load_url(password_hasher_plus.file_url("passhashcommon.js", "lib"), password_hasher_plus);
+conkeror.load_url(password_hasher_plus.file_url("sha1.js", "lib"), password_hasher_plus.SHA1);
 
 password_hasher_plus.Instance.prototype = {
     generateHash: function(input) {
@@ -224,13 +254,9 @@ password_hasher_plus.Instance.prototype = {
     }
 };
 
-function password_hasher_plus_add_listener(buffer) {
-    if (buffer instanceof content_buffer) {
-        buffer.browser.addEventListener("DOMContentLoaded",
-                                        password_hasher_plus.attach,
-                                        false);
-    }
-}
+define_global_mode("password_hasher_plus_mode",
+                   password_hasher_plus.enable_mode,
+                   password_hasher_plus.disable_mode);
 
 if (!password_hasher_plus.prefs.getPrefType('defaults.seed'))
     password_hasher_plus.set_config(['defaults', 'seed'], password_hasher_plus.generateGuid());
@@ -238,5 +264,7 @@ if (!password_hasher_plus.prefs.getPrefType('defaults.length'))
     password_hasher_plus.set_config(['defaults', 'length'], 16);
 if (!password_hasher_plus.prefs.getPrefType('defaults.strength'))
     password_hasher_plus.set_config(['defaults', 'strength'], 2);
+
+password_hasher_plus_mode(true);
 
 provide("password-hasher-plus");
